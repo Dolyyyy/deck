@@ -83,27 +83,88 @@ func (u *Updater) CheckUpdate(currentVersion string, force bool) (*ReleaseInfo, 
 	req.Header.Set("User-Agent", "deck-updater/"+currentVersion)
 
 	resp, err := u.client.Do(req)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		var release ReleaseInfo
+		if err := json.NewDecoder(resp.Body).Decode(&release); err == nil {
+			u.writeCache(&release)
+			hasNew := isNewer(release.TagName, currentVersion)
+			return &release, hasNew, nil
+		}
+	}
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	// Fallback to web redirect (100% immune to GitHub API 403 Forbidden rate limits)
+	rel, redirectErr := u.checkRedirectVersion()
+	if redirectErr == nil && rel != nil {
+		u.writeCache(rel)
+		hasNew := isNewer(rel.TagName, currentVersion)
+		return rel, hasNew, nil
+	}
+
 	if err != nil {
 		return nil, false, err
 	}
+	return nil, false, fmt.Errorf("failed to check for updates: %w", redirectErr)
+}
+
+func (u *Updater) checkRedirectVersion() (*ReleaseInfo, error) {
+	redirectClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	resp, err := redirectClient.Get(fmt.Sprintf("https://github.com/%s/%s/releases/latest", repoOwner, repoName))
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		// Repository has no published releases yet
-		return nil, false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("github api returned status: %s", resp.Status)
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return nil, fmt.Errorf("no release redirect found")
 	}
 
-	var release ReleaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, false, fmt.Errorf("failed to decode release payload: %w", err)
+	idx := strings.LastIndex(loc, "/")
+	if idx == -1 || idx+1 >= len(loc) {
+		return nil, fmt.Errorf("invalid release redirect url: %s", loc)
 	}
 
-	u.writeCache(&release)
-	hasNew := isNewer(release.TagName, currentVersion)
-	return &release, hasNew, nil
+	tagName := loc[idx+1:]
+	vNum := strings.TrimPrefix(tagName, "v")
+
+	assets := []Asset{
+		{
+			Name:               fmt.Sprintf("deck_%s_linux_amd64.tar.gz", vNum),
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/deck_%s_linux_amd64.tar.gz", repoOwner, repoName, tagName, vNum),
+		},
+		{
+			Name:               fmt.Sprintf("deck_%s_linux_arm64.tar.gz", vNum),
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/deck_%s_linux_arm64.tar.gz", repoOwner, repoName, tagName, vNum),
+		},
+		{
+			Name:               fmt.Sprintf("deck_%s_darwin_amd64.tar.gz", vNum),
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/deck_%s_darwin_amd64.tar.gz", repoOwner, repoName, tagName, vNum),
+		},
+		{
+			Name:               fmt.Sprintf("deck_%s_darwin_arm64.tar.gz", vNum),
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/deck_%s_darwin_arm64.tar.gz", repoOwner, repoName, tagName, vNum),
+		},
+		{
+			Name:               fmt.Sprintf("deck_%s_windows_amd64.zip", vNum),
+			BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/%s/releases/download/%s/deck_%s_windows_amd64.zip", repoOwner, repoName, tagName, vNum),
+		},
+	}
+
+	return &ReleaseInfo{
+		TagName: tagName,
+		Name:    tagName,
+		Assets:  assets,
+	}, nil
 }
 
 // SelfUpdate downloads and replaces the running binary with the latest release.
