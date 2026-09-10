@@ -49,6 +49,7 @@ const (
 	modalHelp
 	modalForm
 	modalDiscovery
+	modalDeleteConfirm
 )
 
 type pingResultMsg struct {
@@ -155,6 +156,10 @@ type AppModel struct {
 	discoveredItems []*aliasdiscovery.DiscoveredItem
 	discoveryCursor int
 	version         string
+
+	// Delete confirmation
+	deleteTargetType string
+	deleteTargetName string
 }
 
 // NewApp creates a new Bubbletea model for deck.
@@ -311,34 +316,40 @@ func (m *AppModel) resizeTables(width, height int) {
 	// Dynamic Responsive Server Columns
 	statusW := 15
 	nameW := 16
-	envW := 16     // 16 columns guarantees "production" has 6 clean spaces padding!
-	latencyW := 12 // 12 columns guarantees "1500ms" has 6 clean spaces padding!
-	userW := 10
+	envW := 16     // 16 columns guarantees "production" has clean padding
+	latencyW := 12 // 12 columns guarantees "1500ms" has clean padding
+	showUserCol := usableWidth >= 115
+	userW := 0
+	if showUserCol {
+		userW = 12
+	}
 
-	fixedW := statusW + nameW + envW + latencyW + userW // 69
+	fixedW := statusW + nameW + envW + latencyW + userW
 	remainingW := usableWidth - fixedW
 	if remainingW < 30 {
 		remainingW = 30
 	}
 
-	targetW := (remainingW * 55) / 100
-	if targetW < 20 {
-		targetW = 20
+	targetW := (remainingW * 60) / 100
+	if targetW < 24 {
+		targetW = 24
 	}
 	tagsW := remainingW - targetW
 	if tagsW < 10 {
 		tagsW = 10
 	}
 
-	serverCols := []table.Column{
-		{Title: "STATUS", Width: statusW},
-		{Title: "NAME", Width: nameW},
-		{Title: "TARGET", Width: targetW},
-		{Title: "USER", Width: userW},
-		{Title: "ENV", Width: envW},
-		{Title: "LATENCY", Width: latencyW},
-		{Title: "TAGS", Width: tagsW},
+	var serverCols []table.Column
+	serverCols = append(serverCols, table.Column{Title: "STATUS", Width: statusW})
+	serverCols = append(serverCols, table.Column{Title: "NAME", Width: nameW})
+	serverCols = append(serverCols, table.Column{Title: "TARGET", Width: targetW})
+	if showUserCol {
+		serverCols = append(serverCols, table.Column{Title: "USER", Width: userW})
 	}
+	serverCols = append(serverCols, table.Column{Title: "ENV", Width: envW})
+	serverCols = append(serverCols, table.Column{Title: "LATENCY", Width: latencyW})
+	serverCols = append(serverCols, table.Column{Title: "TAGS", Width: tagsW})
+
 	m.serverTable.SetColumns(serverCols)
 	m.serverTable.SetWidth(usableWidth)
 	m.serverTable.SetHeight(tableHeight)
@@ -412,6 +423,14 @@ func (m *AppModel) updateServerRows() {
 	var rows []table.Row
 	cursorIdx := m.serverTable.Cursor()
 
+	showUserCol := false
+	for _, c := range m.serverTable.Columns() {
+		if c.Title == "USER" {
+			showUserCol = true
+			break
+		}
+	}
+
 	for i, s := range m.filteredServers {
 		prefix := "  "
 		if i == cursorIdx {
@@ -420,11 +439,6 @@ func (m *AppModel) updateServerRows() {
 
 		statusStr := styles.FormatServerStatus(s.Status, prefix)
 		latencyStr := styles.FormatLatency(s.Latency)
-
-		user := s.User
-		if user == "" {
-			user = "-"
-		}
 
 		env := s.Environment
 		if env == "" {
@@ -436,15 +450,18 @@ func (m *AppModel) updateServerRows() {
 			tags = "-"
 		}
 
-		rows = append(rows, table.Row{
-			statusStr,
-			s.Name,
-			s.DisplayAddress(),
-			user,
-			styles.EnvPill.Render(env),
-			latencyStr,
-			styles.TagPill.Render(tags),
-		})
+		var row table.Row
+		row = append(row, statusStr, s.Name, s.DisplayAddress())
+		if showUserCol {
+			user := s.User
+			if user == "" {
+				user = "-"
+			}
+			row = append(row, user)
+		}
+		row = append(row, styles.EnvPill.Render(env), latencyStr, styles.TagPill.Render(tags))
+
+		rows = append(rows, row)
 	}
 	m.serverTable.SetRows(rows)
 }
@@ -894,7 +911,7 @@ func (m *AppModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case "x", "delete":
-		m.deleteSelectedItem()
+		m.promptDeleteItem()
 		return m, nil
 
 	case "s":
@@ -1287,6 +1304,20 @@ func (m *AppModel) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.currentModal == modalDeleteConfirm {
+		switch msg.String() {
+		case "enter", "y", "Y":
+			m.currentModal = modalNone
+			m.executeDeleteItem()
+			return m, nil
+		case "esc", "n", "N", "q":
+			m.currentModal = modalNone
+			m.statusToast = "Deletion cancelled."
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.currentModal = modalNone
@@ -1582,59 +1613,119 @@ func (m *AppModel) saveForm() {
 	}
 }
 
-func (m *AppModel) deleteSelectedItem() {
+func (m *AppModel) promptDeleteItem() {
+	var targetType, targetName string
+
 	switch m.currentTab {
 	case tabServers:
 		idx := m.serverTable.Cursor()
 		if idx >= 0 && idx < len(m.filteredServers) {
-			name := m.filteredServers[idx].Name
-			deckCfg, _ := m.cfgManager.LoadDeckConfig()
-			var remaining []*models.Server
-			for _, s := range deckCfg.Servers {
-				if !strings.EqualFold(s.Name, name) {
-					remaining = append(remaining, s)
-				}
-			}
-			deckCfg.Servers = remaining
-			_ = m.cfgManager.SaveDeckConfig(deckCfg)
-			m.servers, _ = m.cfgManager.LoadAllServers()
-			m.applyFilter(m.searchInput.Value())
+			targetType = "SSH Server"
+			targetName = m.filteredServers[idx].Name
 		}
 	case tabAliases:
 		idx := m.aliasTable.Cursor()
 		if idx >= 0 && idx < len(m.filteredAliases) {
-			_ = m.cfgManager.RemoveAlias(m.filteredAliases[idx].Name)
-			deckCfg, _ := m.cfgManager.LoadDeckConfig()
-			m.aliases = deckCfg.Aliases
-			m.applyFilter(m.searchInput.Value())
+			targetType = "Directory Alias"
+			targetName = m.filteredAliases[idx].Name
 		}
 	case tabTunnels:
 		idx := m.tunnelTable.Cursor()
 		if idx >= 0 && idx < len(m.filteredTunnels) {
-			t := m.filteredTunnels[idx]
-			_ = m.tunnelMgr.Stop(t)
-			_ = m.cfgManager.RemoveTunnel(t.Name)
-			deckCfg, _ := m.cfgManager.LoadDeckConfig()
-			m.tunnels = deckCfg.Tunnels
-			m.applyFilter(m.searchInput.Value())
+			targetType = "Tunnel"
+			targetName = m.filteredTunnels[idx].Name
 		}
 	case tabSnippets:
 		idx := m.snippetTable.Cursor()
 		if idx >= 0 && idx < len(m.filteredSnippets) {
-			_ = m.cfgManager.RemoveSnippet(m.filteredSnippets[idx].Name)
-			deckCfg, _ := m.cfgManager.LoadDeckConfig()
-			m.snippets = deckCfg.Snippets
-			m.applyFilter(m.searchInput.Value())
+			targetType = "Snippet"
+			targetName = m.filteredSnippets[idx].Name
 		}
 	case tabEndpoints:
 		idx := m.endpointTable.Cursor()
 		if idx >= 0 && idx < len(m.filteredEndpoints) {
-			_ = m.cfgManager.RemoveEndpoint(m.filteredEndpoints[idx].Name)
-			deckCfg, _ := m.cfgManager.LoadDeckConfig()
-			m.endpoints = deckCfg.Endpoints
-			m.applyFilter(m.searchInput.Value())
+			targetType = "Endpoint"
+			targetName = m.filteredEndpoints[idx].Name
 		}
 	}
+
+	if targetName == "" {
+		return
+	}
+
+	// If user disabled confirmation in settings, execute directly
+	if !m.settings.ConfirmOnDelete {
+		m.deleteTargetType = targetType
+		m.deleteTargetName = targetName
+		m.executeDeleteItem()
+		return
+	}
+
+	m.deleteTargetType = targetType
+	m.deleteTargetName = targetName
+	m.currentModal = modalDeleteConfirm
+}
+
+func (m *AppModel) executeDeleteItem() {
+	targetName := m.deleteTargetName
+	targetType := m.deleteTargetType
+	if targetName == "" {
+		return
+	}
+
+	switch m.currentTab {
+	case tabServers:
+		_ = m.cfgManager.RemoveServer(targetName)
+		m.servers, _ = m.cfgManager.LoadAllServers()
+		m.applyFilter(m.searchInput.Value())
+		m.updateServerRows()
+		m.statusToast = fmt.Sprintf("✓ Deleted %s %q", targetType, targetName)
+
+	case tabAliases:
+		_ = m.cfgManager.RemoveAlias(targetName)
+		if cfg, err := m.cfgManager.LoadDeckConfig(); err == nil && cfg != nil {
+			m.aliases = cfg.Aliases
+		}
+		m.applyFilter(m.searchInput.Value())
+		m.updateAliasRows()
+		m.statusToast = fmt.Sprintf("✓ Deleted %s %q", targetType, targetName)
+
+	case tabTunnels:
+		for _, t := range m.tunnels {
+			if strings.EqualFold(t.Name, targetName) {
+				_ = m.tunnelMgr.Stop(t)
+				break
+			}
+		}
+		_ = m.cfgManager.RemoveTunnel(targetName)
+		if cfg, err := m.cfgManager.LoadDeckConfig(); err == nil && cfg != nil {
+			m.tunnels = cfg.Tunnels
+		}
+		m.applyFilter(m.searchInput.Value())
+		m.updateTunnelRows()
+		m.statusToast = fmt.Sprintf("✓ Deleted %s %q", targetType, targetName)
+
+	case tabSnippets:
+		_ = m.cfgManager.RemoveSnippet(targetName)
+		if cfg, err := m.cfgManager.LoadDeckConfig(); err == nil && cfg != nil {
+			m.snippets = cfg.Snippets
+		}
+		m.applyFilter(m.searchInput.Value())
+		m.updateSnippetRows()
+		m.statusToast = fmt.Sprintf("✓ Deleted %s %q", targetType, targetName)
+
+	case tabEndpoints:
+		_ = m.cfgManager.RemoveEndpoint(targetName)
+		if cfg, err := m.cfgManager.LoadDeckConfig(); err == nil && cfg != nil {
+			m.endpoints = cfg.Endpoints
+		}
+		m.applyFilter(m.searchInput.Value())
+		m.updateEndpointRows()
+		m.statusToast = fmt.Sprintf("✓ Deleted %s %q", targetType, targetName)
+	}
+
+	m.deleteTargetName = ""
+	m.deleteTargetType = ""
 }
 
 func (m *AppModel) applyFilter(q string) {
@@ -2188,6 +2279,20 @@ func (m *AppModel) renderModal() string {
 			),
 		)
 
+	case modalDeleteConfirm:
+		modalW := 52
+		if m.width > 60 && m.width < 70 {
+			modalW = m.width - 10
+		}
+		var b strings.Builder
+		b.WriteString(styles.StatusOffline.Bold(true).Render("⚠️  CONFIRM DELETION") + "\n\n")
+		b.WriteString(fmt.Sprintf("Are you sure you want to delete %s\n%s?\n\n",
+			styles.FooterDesc.Render(m.deleteTargetType),
+			styles.HeaderStyle.Render(fmt.Sprintf("%q", m.deleteTargetName)),
+		))
+		b.WriteString(styles.FooterDesc.Render("[Enter / y] Confirm  •  [Esc / n] Cancel"))
+		return styles.ModalBox.Width(modalW).Render(b.String())
+
 	case modalHelp:
 		return styles.ModalBox.Render(
 			"Deck Cockpit Keyboard Shortcuts\n\n" +
@@ -2246,7 +2351,7 @@ func (m *AppModel) renderCustomTable(t table.Model) string {
 		end = len(rows)
 	}
 
-	// Render rows
+	// Render rows with guaranteed column gaps to prevent collision
 	for i := start; i < end; i++ {
 		row := rows[i]
 		isSelected := (i == cursor)
@@ -2254,11 +2359,17 @@ func (m *AppModel) renderCustomTable(t table.Model) string {
 		var cells []string
 		for j, val := range row {
 			w := cols[j].Width
+			contentW := w - 2
+			if j == len(row)-1 || contentW < 4 {
+				contentW = w
+			}
+
+			content := lipgloss.NewStyle().MaxWidth(contentW).Inline(true).Render(val)
 			cellStyle := lipgloss.NewStyle().Width(w).MaxWidth(w).Inline(true)
 			if isSelected {
 				cellStyle = cellStyle.Background(styles.BgSelected).Bold(true)
 			}
-			cells = append(cells, cellStyle.Render(val))
+			cells = append(cells, cellStyle.Render(content))
 		}
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, cells...) + "\n")
 	}

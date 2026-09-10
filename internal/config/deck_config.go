@@ -17,8 +17,9 @@ type DeckConfig struct {
 	Aliases   []*models.DirectoryAlias `yaml:"aliases"`
 	Tunnels   []*models.Tunnel         `yaml:"tunnels"`
 	Snippets  []*models.Snippet        `yaml:"snippets"`
-	Endpoints []*models.Endpoint       `yaml:"endpoints"`
-	Settings  models.Settings          `yaml:"settings"`
+	Endpoints     []*models.Endpoint       `yaml:"endpoints"`
+	Settings      models.Settings          `yaml:"settings"`
+	HiddenServers []string                 `yaml:"hidden_servers,omitempty"`
 }
 
 // Manager handles loading, saving, and merging configuration from SSH config and Deck config.
@@ -141,12 +142,49 @@ func (m *Manager) LoadAllServers() ([]*models.Server, error) {
 		}
 	}
 
+	hiddenMap := make(map[string]bool)
+	for _, h := range deckCfg.HiddenServers {
+		hiddenMap[strings.ToLower(h)] = true
+	}
+
 	result := make([]*models.Server, 0, len(serverMap))
 	for _, s := range serverMap {
-		result = append(result, s)
+		if !hiddenMap[strings.ToLower(s.Name)] {
+			result = append(result, s)
+		}
 	}
 
 	return result, nil
+}
+
+// RemoveServer removes a server definition from ~/.config/deck/deck.yaml or hides it if from SSH config.
+func (m *Manager) RemoveServer(name string) error {
+	cfg, err := m.LoadDeckConfig()
+	if err != nil || cfg == nil {
+		cfg = &DeckConfig{}
+	}
+
+	var remaining []*models.Server
+	for _, s := range cfg.Servers {
+		if !strings.EqualFold(s.Name, name) {
+			remaining = append(remaining, s)
+		}
+	}
+	cfg.Servers = remaining
+
+	// Also record in HiddenServers so SSH config servers won't reappear
+	alreadyHidden := false
+	for _, h := range cfg.HiddenServers {
+		if strings.EqualFold(h, name) {
+			alreadyHidden = true
+			break
+		}
+	}
+	if !alreadyHidden {
+		cfg.HiddenServers = append(cfg.HiddenServers, name)
+	}
+
+	return m.SaveDeckConfig(cfg)
 }
 
 // AddOrUpdateServer adds or updates a server definition in ~/.config/deck/deck.yaml.

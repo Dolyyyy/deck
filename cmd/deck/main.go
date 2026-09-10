@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/Dolyyyy/deck/internal/aliasdiscovery"
 	"github.com/Dolyyyy/deck/internal/config"
 	"github.com/Dolyyyy/deck/internal/crypto"
 	"github.com/Dolyyyy/deck/internal/endpoint"
@@ -82,6 +83,9 @@ func main() {
 
 	case "alias":
 		handleAlias(cfgMgr, os.Args[2:])
+
+	case "scan":
+		handleScan(cfgMgr, os.Args[2:])
 
 	case "tunnel":
 		handleTunnel(cfgMgr, os.Args[2:])
@@ -459,6 +463,65 @@ func handleAlias(cfgMgr *config.Manager, args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("✓ Removed alias %q\n", args[1])
+
+	case "scan":
+		handleScan(cfgMgr, args[1:])
+	}
+}
+
+func handleScan(cfgMgr *config.Manager, args []string) {
+	var customFiles []string
+	autoImport := false
+
+	for _, a := range args {
+		if a == "-y" || a == "--yes" {
+			autoImport = true
+		} else if !strings.HasPrefix(a, "-") {
+			customFiles = append(customFiles, a)
+		}
+	}
+
+	scanner := aliasdiscovery.NewScanner(customFiles...)
+	servers, _ := cfgMgr.LoadAllServers()
+	deckCfg, _ := cfgMgr.LoadDeckConfig()
+	if deckCfg == nil {
+		deckCfg = &config.DeckConfig{}
+	}
+
+	fmt.Println("🔍 Scanning shell configuration files and profiles...")
+	items, err := scanner.Discover(servers, deckCfg.Aliases, deckCfg.Snippets)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Scan error: %v\n", err)
+		return
+	}
+
+	if len(items) == 0 {
+		fmt.Println("✓ No new unimported aliases or servers found.")
+		return
+	}
+
+	fmt.Printf("⚡ Discovered %d new items:\n\n", len(items))
+	for _, it := range items {
+		fmt.Printf("  • [%-15s] %-14s %-32s (%s)\n", it.Type, it.Name, it.Target, it.SourceFile)
+	}
+
+	if autoImport {
+		imported := 0
+		for _, it := range items {
+			if it.Type == aliasdiscovery.TypeServer && it.Server != nil {
+				_ = cfgMgr.AddOrUpdateServer(it.Server)
+				imported++
+			} else if it.Type == aliasdiscovery.TypeAlias && it.Alias != nil {
+				_ = cfgMgr.AddOrUpdateAlias(it.Alias)
+				imported++
+			} else if it.Type == aliasdiscovery.TypeSnippet && it.Snippet != nil {
+				_ = cfgMgr.AddOrUpdateSnippet(it.Snippet)
+				imported++
+			}
+		}
+		fmt.Printf("\n✓ Successfully imported %d items into Deck!\n", imported)
+	} else {
+		fmt.Println("\n💡 Tip: Run 'deck scan -y' or open Deck cockpit ('deck') to import them interactively.")
 	}
 }
 
