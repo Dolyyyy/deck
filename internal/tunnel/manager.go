@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Dolyyyy/deck/pkg/models"
@@ -56,7 +55,7 @@ func (m *Manager) Start(t *models.Tunnel) error {
 
 	// Check if already running
 	if cmd, ok := m.processes[t.Name]; ok && cmd != nil && cmd.Process != nil {
-		if err := cmd.Process.Signal(syscall.Signal(0)); err == nil {
+		if isProcessAlive(cmd.Process) {
 			return fmt.Errorf("tunnel %q is already running (PID %d)", t.Name, cmd.Process.Pid)
 		}
 	}
@@ -78,7 +77,7 @@ func (m *Manager) Start(t *models.Tunnel) error {
 	}
 
 	cmd := exec.Command("ssh", args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttr(cmd)
 
 	if err := cmd.Start(); err != nil {
 		t.Active = false
@@ -93,7 +92,7 @@ func (m *Manager) Start(t *models.Tunnel) error {
 
 	// Wait briefly to check if ssh exited immediately (e.g. invalid host or key)
 	time.Sleep(150 * time.Millisecond)
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+	if !isProcessAlive(cmd.Process) {
 		t.Active = false
 		t.PID = 0
 		delete(m.processes, t.Name)
@@ -112,22 +111,15 @@ func (m *Manager) Stop(t *models.Tunnel) error {
 	if !ok || cmd == nil || cmd.Process == nil {
 		// If PID is stored in model, try to kill by PID
 		if t.PID > 0 {
-			if proc, err := os.FindProcess(t.PID); err == nil {
-				_ = proc.Signal(syscall.SIGTERM)
-			}
+			killPID(t.PID)
 		}
 		t.Active = false
 		t.PID = 0
 		return nil
 	}
 
-	// Kill entire process group
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	} else {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-	}
+	// Kill process
+	killProcess(cmd)
 
 	time.Sleep(100 * time.Millisecond)
 	_ = cmd.Process.Kill()
@@ -146,7 +138,7 @@ func (m *Manager) IsRunning(t *models.Tunnel) bool {
 	defer m.mu.Unlock()
 
 	if cmd, ok := m.processes[t.Name]; ok && cmd != nil && cmd.Process != nil {
-		return cmd.Process.Signal(syscall.Signal(0)) == nil
+		return isProcessAlive(cmd.Process)
 	}
 
 	if t.PID > 0 {
@@ -154,7 +146,7 @@ func (m *Manager) IsRunning(t *models.Tunnel) bool {
 		if err != nil {
 			return false
 		}
-		return proc.Signal(syscall.Signal(0)) == nil
+		return isProcessAlive(proc)
 	}
 
 	return false
@@ -167,12 +159,7 @@ func (m *Manager) StopAll() {
 
 	for name, cmd := range m.processes {
 		if cmd != nil && cmd.Process != nil {
-			pgid, err := syscall.Getpgid(cmd.Process.Pid)
-			if err == nil {
-				_ = syscall.Kill(-pgid, syscall.SIGTERM)
-			} else {
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-			}
+			killProcess(cmd)
 		}
 		delete(m.processes, name)
 	}
