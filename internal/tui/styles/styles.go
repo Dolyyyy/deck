@@ -8,123 +8,251 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// AvailableThemes lists all themes supported by Deck.
+var AvailableThemes = []string{
+	"Catppuccin Mocha",
+	"Tokyo Night",
+	"Nord",
+	"Dracula",
+	"Cyberpunk",
+}
+
+// CurrentTheme stores the currently active theme name.
+var CurrentTheme = "Catppuccin Mocha"
+
 var (
-	// Professional Terminal Color Palette (Catppuccin Mocha / Tokyo Night inspiration)
-	// Respects terminal transparency and avoids garish AI neon clichés.
-	TextNormal = lipgloss.Color("#CDD6F4")
-	TextMuted  = lipgloss.Color("#6C7086")
-	TextDim    = lipgloss.Color("#45475A")
-	TextBold   = lipgloss.Color("#FFFFFF")
+	// Palette Colors
+	TextNormal lipgloss.Color
+	TextMuted  lipgloss.Color
+	TextDim    lipgloss.Color
+	TextBold   lipgloss.Color
 
-	AccentPrimary   = lipgloss.Color("#89B4FA") // Clean Blue / Indigo
-	AccentSecondary = lipgloss.Color("#94E2D5") // Soft Mint / Cyan
-	AccentWarning   = lipgloss.Color("#F9E2AF") // Warm Gold
-	AccentDanger    = lipgloss.Color("#F38BA8") // Soft Rose / Coral Red
-	AccentSuccess   = lipgloss.Color("#A6E3A1") // Vibrant Green
-	AccentOrange    = lipgloss.Color("#FAB387") // Peach / Orange
+	AccentPrimary   lipgloss.Color
+	AccentSecondary lipgloss.Color
+	AccentWarning   lipgloss.Color
+	AccentDanger    lipgloss.Color
+	AccentSuccess   lipgloss.Color
+	AccentOrange    lipgloss.Color
 
-	BgHighlight = lipgloss.Color("#2A2B3D") // Distinct row background
-	BgSelected  = lipgloss.Color("#313244") // High-contrast active row selection
-	BorderMuted = lipgloss.Color("#313244") // Clean subtle border
+	BgHighlight lipgloss.Color
+	BgSelected  lipgloss.Color
+	BorderMuted lipgloss.Color
 
-	// Cursor & Selection indicator
-	CursorIndicator = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(AccentPrimary)
+	// Lipgloss Styles
+	CursorIndicator lipgloss.Style
+	LogoStyle       lipgloss.Style
+	VersionStyle    lipgloss.Style
+	UpdateBadge     lipgloss.Style
+	TabActive       lipgloss.Style
+	TabInactive     lipgloss.Style
+	TabBorder       lipgloss.Style
+	SearchBox       lipgloss.Style
 
-	// Top Bar & Branding
+	StatusOnline   lipgloss.Style
+	StatusOffline  lipgloss.Style
+	StatusChecking lipgloss.Style
+	StatusUnknown  lipgloss.Style
+
+	LatencyFast   lipgloss.Style
+	LatencyMedium lipgloss.Style
+	LatencySlow   lipgloss.Style
+	LatencyMuted  lipgloss.Style
+
+	TagPill lipgloss.Style
+	EnvPill lipgloss.Style
+
+	ModalBox   lipgloss.Style
+	FooterKey  lipgloss.Style
+	FooterDesc lipgloss.Style
+
+	KeyStyle    lipgloss.Style
+	HeaderStyle lipgloss.Style
+	BadgeTag    lipgloss.Style
+	BadgeEnv    lipgloss.Style
+)
+
+func init() {
+	ApplyTheme("Catppuccin Mocha")
+}
+
+// ApplyTheme switches all active colors and styles to the requested theme.
+func ApplyTheme(name string) {
+	CurrentTheme = name
+	switch name {
+	case "Tokyo Night":
+		TextNormal = lipgloss.Color("#A9B1D6")
+		TextMuted = lipgloss.Color("#565F89")
+		TextDim = lipgloss.Color("#414868")
+		TextBold = lipgloss.Color("#C0CAF5")
+
+		AccentPrimary = lipgloss.Color("#7AA2F7")   // Tokyo Blue
+		AccentSecondary = lipgloss.Color("#7DCFFF") // Cyan
+		AccentWarning = lipgloss.Color("#E0AF68")   // Warm Gold
+		AccentDanger = lipgloss.Color("#F7768E")    // Tokyo Pink/Red
+		AccentSuccess = lipgloss.Color("#9ECE6A")   // Green
+		AccentOrange = lipgloss.Color("#FF9E64")    // Orange
+
+		BgHighlight = lipgloss.Color("#24283B")
+		BgSelected = lipgloss.Color("#2E3440")
+		BorderMuted = lipgloss.Color("#3B4261")
+
+	case "Nord":
+		TextNormal = lipgloss.Color("#D8DEE9")
+		TextMuted = lipgloss.Color("#4C566A")
+		TextDim = lipgloss.Color("#3B4252")
+		TextBold = lipgloss.Color("#ECEFF4")
+
+		AccentPrimary = lipgloss.Color("#88C0D0")   // Frost Cyan
+		AccentSecondary = lipgloss.Color("#81A1C1") // Glacier Blue
+		AccentWarning = lipgloss.Color("#EBCB8B")   // Nord Yellow
+		AccentDanger = lipgloss.Color("#BF616A")    // Nord Red
+		AccentSuccess = lipgloss.Color("#A3BE8C")   // Nord Green
+		AccentOrange = lipgloss.Color("#D08770")    // Orange
+
+		BgHighlight = lipgloss.Color("#2E3440")
+		BgSelected = lipgloss.Color("#434C5E")
+		BorderMuted = lipgloss.Color("#3B4252")
+
+	case "Dracula":
+		TextNormal = lipgloss.Color("#F8F8F2")
+		TextMuted = lipgloss.Color("#6272A4")
+		TextDim = lipgloss.Color("#44475A")
+		TextBold = lipgloss.Color("#FFFFFF")
+
+		AccentPrimary = lipgloss.Color("#BD93F9")   // Dracula Purple
+		AccentSecondary = lipgloss.Color("#8BE9FD") // Cyan
+		AccentWarning = lipgloss.Color("#F1FA8C")   // Yellow
+		AccentDanger = lipgloss.Color("#FF5555")    // Red
+		AccentSuccess = lipgloss.Color("#50FA7B")   // Green
+		AccentOrange = lipgloss.Color("#FFB86C")    // Orange
+
+		BgHighlight = lipgloss.Color("#282A36")
+		BgSelected = lipgloss.Color("#44475A")
+		BorderMuted = lipgloss.Color("#6272A4")
+
+	case "Cyberpunk":
+		TextNormal = lipgloss.Color("#E2E8F0")
+		TextMuted = lipgloss.Color("#718096")
+		TextDim = lipgloss.Color("#2D3748")
+		TextBold = lipgloss.Color("#FFFFFF")
+
+		AccentPrimary = lipgloss.Color("#00F0FF")   // Neon Cyan
+		AccentSecondary = lipgloss.Color("#FF007F") // Neon Pink
+		AccentWarning = lipgloss.Color("#FFE600")   // Electric Yellow
+		AccentDanger = lipgloss.Color("#FF3366")    // Hot Red
+		AccentSuccess = lipgloss.Color("#00FF66")   // Neon Green
+		AccentOrange = lipgloss.Color("#FF7700")    // Neon Orange
+
+		BgHighlight = lipgloss.Color("#1A1B26")
+		BgSelected = lipgloss.Color("#2D234A")
+		BorderMuted = lipgloss.Color("#3B2D54")
+
+	default: // Catppuccin Mocha
+		CurrentTheme = "Catppuccin Mocha"
+		TextNormal = lipgloss.Color("#CDD6F4")
+		TextMuted = lipgloss.Color("#6C7086")
+		TextDim = lipgloss.Color("#45475A")
+		TextBold = lipgloss.Color("#FFFFFF")
+
+		AccentPrimary = lipgloss.Color("#89B4FA")   // Clean Blue
+		AccentSecondary = lipgloss.Color("#94E2D5") // Soft Teal
+		AccentWarning = lipgloss.Color("#F9E2AF")   // Warm Gold
+		AccentDanger = lipgloss.Color("#F38BA8")    // Rose Red
+		AccentSuccess = lipgloss.Color("#A6E3A1")   // Vibrant Green
+		AccentOrange = lipgloss.Color("#FAB387")    // Peach
+
+		BgHighlight = lipgloss.Color("#2A2B3D")
+		BgSelected = lipgloss.Color("#313244")
+		BorderMuted = lipgloss.Color("#313244")
+	}
+
+	// Rebuild Styles
+	CursorIndicator = lipgloss.NewStyle().Bold(true).Foreground(AccentPrimary)
+
 	LogoStyle = lipgloss.NewStyle().
-			Bold(true).
-			Background(AccentPrimary).
-			Foreground(lipgloss.Color("#11111B")).
-			Padding(0, 1)
+		Bold(true).
+		Background(AccentPrimary).
+		Foreground(lipgloss.Color("#11111B")).
+		Padding(0, 1)
 
 	VersionStyle = lipgloss.NewStyle().
-			Foreground(TextMuted).
-			PaddingLeft(1)
+		Foreground(TextMuted).
+		PaddingLeft(1)
 
 	UpdateBadge = lipgloss.NewStyle().
-			Bold(true).
-			Background(AccentWarning).
-			Foreground(lipgloss.Color("#11111B")).
-			Padding(0, 1)
+		Bold(true).
+		Background(AccentWarning).
+		Foreground(lipgloss.Color("#11111B")).
+		Padding(0, 1)
 
-	// Clean Tabs (Consistent height & alignment)
 	TabActive = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(TextBold).
-			Background(BgHighlight).
-			Padding(0, 1)
+		Bold(true).
+		Foreground(TextBold).
+		Background(BgHighlight).
+		Padding(0, 1)
 
 	TabInactive = lipgloss.NewStyle().
-			Foreground(TextMuted).
-			Padding(0, 1)
+		Foreground(TextMuted).
+		Padding(0, 1)
 
 	TabBorder = lipgloss.NewStyle().
-			Foreground(BorderMuted)
+		Foreground(BorderMuted)
 
-	// Search Input
 	SearchBox = lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(AccentPrimary).
-			Padding(0, 0, 0, 0)
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(AccentPrimary).
+		Padding(0, 0, 0, 0)
 
-	// Status Badges (Minimal, pro unix dot indicators)
 	StatusOnline = lipgloss.NewStyle().
-			Foreground(AccentSuccess).
-			Bold(true)
+		Foreground(AccentSuccess).
+		Bold(true)
 
 	StatusOffline = lipgloss.NewStyle().
-			Foreground(AccentDanger).
-			Bold(true)
+		Foreground(AccentDanger).
+		Bold(true)
 
 	StatusChecking = lipgloss.NewStyle().
-			Foreground(AccentWarning)
+		Foreground(AccentWarning)
 
 	StatusUnknown = lipgloss.NewStyle().
-			Foreground(TextMuted)
+		Foreground(TextMuted)
 
-	// Latency Badges
 	LatencyFast = lipgloss.NewStyle().
-			Foreground(AccentSuccess).
-			Bold(true)
+		Foreground(AccentSuccess).
+		Bold(true)
 
 	LatencyMedium = lipgloss.NewStyle().
-			Foreground(AccentWarning)
+		Foreground(AccentWarning)
 
 	LatencySlow = lipgloss.NewStyle().
-			Foreground(AccentDanger)
+		Foreground(AccentDanger)
 
 	LatencyMuted = lipgloss.NewStyle().
-			Foreground(TextMuted)
+		Foreground(TextMuted)
 
-	// Tags & Environments
 	TagPill = lipgloss.NewStyle().
 		Foreground(AccentSecondary)
 
 	EnvPill = lipgloss.NewStyle().
 		Foreground(AccentWarning)
 
-	// Modal Overlays
 	ModalBox = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(AccentPrimary).
-			Padding(1, 2)
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(AccentPrimary).
+		Padding(1, 2)
 
-	// Footer Keybindings Bar (Compact, pro unix layout)
 	FooterKey = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(AccentPrimary)
+		Bold(true).
+		Foreground(AccentPrimary)
 
 	FooterDesc = lipgloss.NewStyle().
-			Foreground(TextMuted)
+		Foreground(TextMuted)
 
-	// CLI Helpers
-	KeyStyle    = lipgloss.NewStyle().Bold(true).Foreground(AccentPrimary)
+	KeyStyle = lipgloss.NewStyle().Bold(true).Foreground(AccentPrimary)
 	HeaderStyle = lipgloss.NewStyle().Bold(true).Foreground(TextBold)
-	BadgeTag    = lipgloss.NewStyle().Bold(true).Foreground(AccentSecondary)
-	BadgeEnv    = lipgloss.NewStyle().Bold(true).Foreground(AccentWarning)
-)
+	BadgeTag = lipgloss.NewStyle().Bold(true).Foreground(AccentSecondary)
+	BadgeEnv = lipgloss.NewStyle().Bold(true).Foreground(AccentWarning)
+}
 
 // FormatServerStatus formats server connectivity status with vibrant colored dot indicators.
 func FormatServerStatus(status models.ServerStatus, prefix string) string {
@@ -140,7 +268,7 @@ func FormatServerStatus(status models.ServerStatus, prefix string) string {
 	}
 }
 
-// FormatLatency formats ping round-trip time with traffic light colors (Green < 60ms, Yellow < 150ms, Red >= 150ms).
+// FormatLatency formats ping round-trip time with traffic light colors.
 func FormatLatency(d time.Duration) string {
 	if d <= 0 {
 		return LatencyMuted.Render("-")
@@ -155,7 +283,7 @@ func FormatLatency(d time.Duration) string {
 	return LatencySlow.Render(str)
 }
 
-// FormatTunnelStatus formats SSH tunnel state (Green for UP, Red for DOWN).
+// FormatTunnelStatus formats SSH tunnel state.
 func FormatTunnelStatus(active bool, pid int) string {
 	if active {
 		if pid > 0 {
@@ -186,7 +314,7 @@ func FormatEndpointStatus(status models.EndpointStatus, code int) string {
 	}
 }
 
-// FormatSSLExpiry formats SSL certificate remaining days with warning colors.
+// FormatSSLExpiry formats SSL certificate remaining days.
 func FormatSSLExpiry(days int) string {
 	if days <= 0 {
 		return LatencyMuted.Render("n/a")

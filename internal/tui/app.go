@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/Dolyyyy/deck/internal/aliasdiscovery"
 	"github.com/Dolyyyy/deck/internal/config"
 	"github.com/Dolyyyy/deck/internal/crypto"
 	"github.com/Dolyyyy/deck/internal/endpoint"
@@ -35,6 +36,7 @@ const (
 	tabTunnels
 	tabSnippets
 	tabEndpoints
+	tabSettings
 )
 
 type activeModal int
@@ -46,6 +48,7 @@ const (
 	modalImport
 	modalHelp
 	modalForm
+	modalDiscovery
 )
 
 type pingResultMsg struct {
@@ -145,6 +148,12 @@ type AppModel struct {
 	TargetServer  *models.Server
 	TargetDir     string
 	TargetSnippet *models.Snippet
+
+	// Settings & Auto-discovery
+	settings        models.Settings
+	settingsCursor  int
+	discoveredItems []*aliasdiscovery.DiscoveredItem
+	discoveryCursor int
 }
 
 // NewApp creates a new Bubbletea model for deck.
@@ -161,6 +170,39 @@ func NewApp(cfgManager *config.Manager) (*AppModel, error) {
 	deckCfg, err := cfgManager.LoadDeckConfig()
 	if err != nil {
 		deckCfg = &config.DeckConfig{}
+	}
+	if deckCfg.Settings.Theme == "" {
+		deckCfg.Settings = models.DefaultSettings()
+	}
+	styles.ApplyTheme(deckCfg.Settings.Theme)
+
+	// Discover shell aliases (.bashrc, .zshrc, .bash_aliases)
+	scanner := aliasdiscovery.NewScanner()
+	discovered, _ := scanner.Discover(servers, deckCfg.Aliases, deckCfg.Snippets)
+	var initialModal activeModal = modalNone
+	var autoSyncToast string
+	if len(discovered) > 0 {
+		if deckCfg.Settings.AutoSyncShellAliases {
+			var addedCount int
+			for _, item := range discovered {
+				if item.Type == aliasdiscovery.TypeServer && item.Server != nil {
+					_ = cfgManager.AddOrUpdateServer(item.Server)
+					servers = append(servers, item.Server)
+					addedCount++
+				} else if item.Type == aliasdiscovery.TypeAlias && item.Alias != nil {
+					_ = cfgManager.AddOrUpdateAlias(item.Alias)
+					deckCfg.Aliases = append(deckCfg.Aliases, item.Alias)
+					addedCount++
+				} else if item.Type == aliasdiscovery.TypeSnippet && item.Snippet != nil {
+					_ = cfgManager.AddOrUpdateSnippet(item.Snippet)
+					deckCfg.Snippets = append(deckCfg.Snippets, item.Snippet)
+					addedCount++
+				}
+			}
+			autoSyncToast = fmt.Sprintf("⚡ Auto-synced %d aliases from shell config", addedCount)
+		} else {
+			initialModal = modalDiscovery
+		}
 	}
 
 	ti := textinput.New()
@@ -194,7 +236,10 @@ func NewApp(cfgManager *config.Manager) (*AppModel, error) {
 		endpoints:         deckCfg.Endpoints,
 		filteredEndpoints: deckCfg.Endpoints,
 		currentTab:        tabServers,
-		currentModal:      modalNone,
+		currentModal:      initialModal,
+		settings:          deckCfg.Settings,
+		discoveredItems:   discovered,
+		statusToast:       autoSyncToast,
 		searchInput:       ti,
 		passwordInput:     pwd,
 		width:             100,
@@ -257,15 +302,36 @@ func (m *AppModel) resizeTables(width, height int) {
 
 	m.searchInput.Width = usableWidth - 8
 
-	// Dynamic Server Columns
+	// Dynamic Responsive Server Columns
+	statusW := 15
+	nameW := 16
+	envW := 16     // 16 columns guarantees "production" has 6 clean spaces padding!
+	latencyW := 12 // 12 columns guarantees "1500ms" has 6 clean spaces padding!
+	userW := 10
+
+	fixedW := statusW + nameW + envW + latencyW + userW // 69
+	remainingW := usableWidth - fixedW
+	if remainingW < 30 {
+		remainingW = 30
+	}
+
+	targetW := (remainingW * 55) / 100
+	if targetW < 20 {
+		targetW = 20
+	}
+	tagsW := remainingW - targetW
+	if tagsW < 10 {
+		tagsW = 10
+	}
+
 	serverCols := []table.Column{
-		{Title: "STATUS", Width: 16},
-		{Title: "NAME", Width: 18},
-		{Title: "TARGET", Width: 28},
-		{Title: "USER", Width: 10},
-		{Title: "ENV", Width: 10},
-		{Title: "LATENCY", Width: 10},
-		{Title: "TAGS", Width: 16},
+		{Title: "STATUS", Width: statusW},
+		{Title: "NAME", Width: nameW},
+		{Title: "TARGET", Width: targetW},
+		{Title: "USER", Width: userW},
+		{Title: "ENV", Width: envW},
+		{Title: "LATENCY", Width: latencyW},
+		{Title: "TAGS", Width: tagsW},
 	}
 	m.serverTable.SetColumns(serverCols)
 	m.serverTable.SetWidth(usableWidth)
@@ -278,7 +344,7 @@ func (m *AppModel) resizeTables(width, height int) {
 	if pathW < 20 {
 		pathW = 20
 	}
-	descW := usableWidth - (aliasW + pathW + existsW + 4)
+	descW := usableWidth - (aliasW + pathW + existsW - 4)
 	if descW < 15 {
 		descW = 15
 	}
@@ -307,8 +373,8 @@ func (m *AppModel) resizeTables(width, height int) {
 
 	// Dynamic Snippet Columns
 	snipW := 22
-	targetW := 14
-	tagsW := 18
+	targetW = 14
+	tagsW = 18
 	cmdW := usableWidth - (snipW + targetW + tagsW + 4)
 	if cmdW < 20 {
 		cmdW = 20
@@ -325,10 +391,10 @@ func (m *AppModel) resizeTables(width, height int) {
 
 	// Dynamic Endpoint Columns
 	epCols := []table.Column{
-		{Title: "STATUS", Width: 18},
-		{Title: "NAME", Width: 20},
-		{Title: "URL", Width: 36},
-		{Title: "LATENCY", Width: 10},
+		{Title: "STATUS", Width: 16},
+		{Title: "NAME", Width: 18},
+		{Title: "URL", Width: 34},
+		{Title: "LATENCY", Width: 12},
 		{Title: "SSL EXPIRY", Width: 18},
 	}
 	m.endpointTable.SetColumns(epCols)
@@ -677,6 +743,57 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *AppModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
+	if m.currentTab == tabSettings {
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.Close()
+			return m, tea.Quit
+		case "1":
+			m.switchTab(tabServers)
+			return m, nil
+		case "2":
+			m.switchTab(tabAliases)
+			return m, nil
+		case "3":
+			m.switchTab(tabTunnels)
+			return m, nil
+		case "4":
+			m.switchTab(tabSnippets)
+			return m, nil
+		case "5":
+			m.switchTab(tabEndpoints)
+			return m, nil
+		case "6":
+			m.switchTab(tabSettings)
+			return m, nil
+		case "tab":
+			m.switchTab(tabServers)
+			return m, nil
+		case "shift+tab":
+			m.switchTab(tabEndpoints)
+			return m, nil
+		case "up", "k":
+			if m.settingsCursor > 0 {
+				m.settingsCursor--
+			}
+			return m, nil
+		case "down", "j":
+			if m.settingsCursor < 7 {
+				m.settingsCursor++
+			}
+			return m, nil
+		case "left", "h":
+			m.handleSettingsCycle(-1)
+			return m, nil
+		case "right", "l":
+			m.handleSettingsCycle(1)
+			return m, nil
+		case " ", "enter":
+			return m.handleSettingsAction()
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.Close()
@@ -697,14 +814,17 @@ func (m *AppModel) handleNormalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "5":
 		m.switchTab(tabEndpoints)
 		return m, nil
+	case "6":
+		m.switchTab(tabSettings)
+		return m, nil
 
 	case "tab":
-		next := (m.currentTab + 1) % 5
+		next := (m.currentTab + 1) % 6
 		m.switchTab(next)
 		return m, nil
 
 	case "shift+tab":
-		prev := (m.currentTab - 1 + 5) % 5
+		prev := (m.currentTab - 1 + 6) % 6
 		m.switchTab(prev)
 		return m, nil
 
@@ -1091,6 +1211,73 @@ func newFieldInput(placeholder string) textinput.Model {
 }
 
 func (m *AppModel) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.currentModal == modalDiscovery {
+		switch msg.String() {
+		case "esc", "q":
+			m.currentModal = modalNone
+			m.statusToast = "Shell alias import skipped."
+			return m, nil
+		case "up", "k":
+			if m.discoveryCursor > 0 {
+				m.discoveryCursor--
+			}
+			return m, nil
+		case "down", "j":
+			if m.discoveryCursor < len(m.discoveredItems)-1 {
+				m.discoveryCursor++
+			}
+			return m, nil
+		case " ":
+			if len(m.discoveredItems) > 0 && m.discoveryCursor < len(m.discoveredItems) {
+				m.discoveredItems[m.discoveryCursor].Selected = !m.discoveredItems[m.discoveryCursor].Selected
+			}
+			return m, nil
+		case "a":
+			allSelected := true
+			for _, it := range m.discoveredItems {
+				if !it.Selected {
+					allSelected = false
+					break
+				}
+			}
+			for _, it := range m.discoveredItems {
+				it.Selected = !allSelected
+			}
+			return m, nil
+		case "enter":
+			importedCount := 0
+			for _, it := range m.discoveredItems {
+				if !it.Selected {
+					continue
+				}
+				if it.Type == aliasdiscovery.TypeServer && it.Server != nil {
+					_ = m.cfgManager.AddOrUpdateServer(it.Server)
+					m.servers = append(m.servers, it.Server)
+					importedCount++
+				} else if it.Type == aliasdiscovery.TypeAlias && it.Alias != nil {
+					_ = m.cfgManager.AddOrUpdateAlias(it.Alias)
+					m.aliases = append(m.aliases, it.Alias)
+					importedCount++
+				} else if it.Type == aliasdiscovery.TypeSnippet && it.Snippet != nil {
+					_ = m.cfgManager.AddOrUpdateSnippet(it.Snippet)
+					m.snippets = append(m.snippets, it.Snippet)
+					importedCount++
+				}
+			}
+			m.currentModal = modalNone
+			m.applyFilter(m.searchInput.Value())
+			m.updateServerRows()
+			m.updateAliasRows()
+			m.updateSnippetRows()
+			m.statusToast = fmt.Sprintf("⚡ Successfully imported %d items from shell config!", importedCount)
+			if importedCount > 0 {
+				return m, m.pingAllServersCmd()
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.currentModal = modalNone
@@ -1504,13 +1691,14 @@ func (m *AppModel) View() string {
 		leftHeader = lipgloss.JoinHorizontal(lipgloss.Center, leftHeader, " ", badge)
 	}
 
-	// 5 Cockpit Tabs
+	// 6 Cockpit Tabs
 	tabLabels := []string{
 		fmt.Sprintf("[1] SSH Servers (%d)", len(m.filteredServers)),
 		fmt.Sprintf("[2] Aliases (%d)", len(m.filteredAliases)),
 		fmt.Sprintf("[3] Tunnels (%d)", len(m.filteredTunnels)),
 		fmt.Sprintf("[4] Snippets (%d)", len(m.filteredSnippets)),
 		fmt.Sprintf("[5] Endpoints (%d)", len(m.filteredEndpoints)),
+		"[6] Settings",
 	}
 
 	var renderedTabs []string
@@ -1529,8 +1717,10 @@ func (m *AppModel) View() string {
 	topBar := lipgloss.JoinHorizontal(lipgloss.Center, leftHeader, "    ", tabs)
 	b.WriteString("  " + topBar + "\n\n")
 
-	// Search Box
-	b.WriteString("  " + styles.SearchBox.Render(m.searchInput.View()) + "\n\n")
+	// Search Box (only for list tabs)
+	if m.currentTab != tabSettings {
+		b.WriteString("  " + styles.SearchBox.Render(m.searchInput.View()) + "\n\n")
+	}
 
 	// Main Tab Table (ANSI-aware custom table renderer)
 	switch m.currentTab {
@@ -1544,14 +1734,17 @@ func (m *AppModel) View() string {
 		b.WriteString("  " + m.renderCustomTable(m.snippetTable) + "\n")
 	case tabEndpoints:
 		b.WriteString("  " + m.renderCustomTable(m.endpointTable) + "\n")
+	case tabSettings:
+		b.WriteString(m.renderSettingsView() + "\n")
 	}
 
-	// Footer / Status Toast
-	footer := m.renderFooter()
+	// Status Toast
 	if m.statusToast != "" {
-		footer = styles.FooterKey.Copy().Foreground(styles.AccentWarning).Render(m.statusToast) + "   " + footer
+		b.WriteString("\n  " + styles.FooterKey.Copy().Foreground(styles.AccentWarning).Render(m.statusToast) + "\n")
 	}
-	b.WriteString("\n  " + footer)
+
+	// Footer (Responsive multi-line)
+	b.WriteString("\n" + m.renderFooter() + "\n")
 
 	// Modal Overlay
 	if m.currentModal != modalNone {
@@ -1579,9 +1772,9 @@ func (m *AppModel) renderFooter() string {
 			{"e", "edit"},
 			{"s", "stats"},
 			{"x", "delete"},
+			{"r", "ping"},
 			{"/", "filter"},
 			{"tab", "switch"},
-			{"r", "ping"},
 			{"E", "export"},
 			{"i", "import"},
 			{"?", "help"},
@@ -1641,19 +1834,253 @@ func (m *AppModel) renderFooter() string {
 			{"tab", "switch"},
 			{"q", "quit"},
 		}
+	case tabSettings:
+		items = []struct {
+			key  string
+			desc string
+		}{
+			{"↑/↓", "navigate"},
+			{"space/enter", "toggle / execute"},
+			{"←/→", "cycle option"},
+			{"tab", "switch tab"},
+			{"q", "quit"},
+		}
 	}
 
-	var parts []string
+	maxW := m.width - 6
+	if maxW < 50 {
+		maxW = 50
+	}
+
+	var lines []string
+	var currentLine []string
+	currentLen := 0
+
 	for _, item := range items {
 		k := styles.FooterKey.Render("[" + item.key + "]")
 		d := styles.FooterDesc.Render(item.desc)
-		parts = append(parts, k+" "+d)
+		itemStr := k + " " + d
+		itemLen := len(item.key) + len(item.desc) + 3
+
+		if len(currentLine) > 0 && currentLen+itemLen+4 > maxW {
+			lines = append(lines, "  "+strings.Join(currentLine, "  •  "))
+			currentLine = []string{itemStr}
+			currentLen = itemLen
+		} else {
+			currentLine = append(currentLine, itemStr)
+			currentLen += itemLen + 4
+		}
 	}
-	return strings.Join(parts, "  •  ")
+	if len(currentLine) > 0 {
+		lines = append(lines, "  "+strings.Join(currentLine, "  •  "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *AppModel) renderSettingsView() string {
+	var b strings.Builder
+	b.WriteString(styles.HeaderStyle.Render("  ⚙️ DECK CONFIGURATION & PREFERENCES") + "\n\n")
+
+	type settingRow struct {
+		label string
+		value string
+		desc  string
+	}
+
+	themeVal := fmt.Sprintf("< %s >", m.settings.Theme)
+	syncVal := "○ OFF"
+	if m.settings.AutoSyncShellAliases {
+		syncVal = styles.StatusOnline.Render("● ON")
+	}
+	pingVal := "○ OFF"
+	if m.settings.AutoPingOnLaunch {
+		pingVal = styles.StatusOnline.Render("● ON")
+	}
+	intervalVal := "< Disabled >"
+	if m.settings.PingInterval > 0 {
+		intervalVal = fmt.Sprintf("< %ds >", m.settings.PingInterval)
+	}
+	delVal := "○ OFF"
+	if m.settings.ConfirmOnDelete {
+		delVal = styles.StatusOnline.Render("● ON")
+	}
+	updVal := "○ OFF"
+	if m.settings.CheckUpdatesOnStart {
+		updVal = styles.StatusOnline.Render("● ON")
+	}
+
+	rows := []settingRow{
+		{"Auto-Sync Shell Aliases", syncVal, "Automatically import new aliases from ~/.bashrc & ~/.zshrc on launch"},
+		{"Terminal UI Theme", styles.KeyStyle.Render(themeVal), "Select color theme (Catppuccin Mocha, Tokyo Night, Nord, Dracula, Cyberpunk)"},
+		{"Auto-Ping on Launch", pingVal, "Automatically probe server TCP latencies upon opening Deck"},
+		{"Ping Interval", intervalVal, "Background latency refresh cycle (15s, 30s, 60s, Disabled)"},
+		{"Default SSH User", m.settings.DefaultSSHUser, "Default username for new SSH connections"},
+		{"Confirm Before Delete", delVal, "Display confirmation prompt before deleting items"},
+		{"Check GitHub Updates", updVal, "Check for newer Deck versions on GitHub at startup"},
+		{"⚡ Scan Shell Aliases Now", "[ Press Enter ]", "Scan ~/.bashrc, ~/.zshrc, ~/.bash_aliases for new servers and paths"},
+	}
+
+	for i, r := range rows {
+		prefix := "    "
+		isSel := (i == m.settingsCursor)
+		if isSel {
+			prefix = styles.CursorIndicator.Render("  ❯ ")
+		}
+
+		lblStyle := styles.HeaderStyle
+		if isSel {
+			lblStyle = lblStyle.Foreground(styles.AccentPrimary)
+		}
+
+		lbl := lblStyle.Width(28).Render(r.label)
+		val := lipgloss.NewStyle().Width(24).Render(r.value)
+		desc := styles.FooterDesc.Render(r.desc)
+
+		line := prefix + lbl + " " + val + "  " + desc
+		if isSel {
+			line = lipgloss.NewStyle().Background(styles.BgSelected).Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+
+	b.WriteString("\n  " + styles.FooterDesc.Render("[↑/↓] Navigate  •  [Space/Enter] Toggle / Action  •  [←/→] Cycle Theme/Interval"))
+	return b.String()
+}
+
+func (m *AppModel) handleSettingsCycle(delta int) {
+	switch m.settingsCursor {
+	case 1: // Theme
+		themes := styles.AvailableThemes
+		curIdx := 0
+		for i, t := range themes {
+			if strings.EqualFold(t, m.settings.Theme) {
+				curIdx = i
+				break
+			}
+		}
+		newIdx := (curIdx + delta + len(themes)) % len(themes)
+		m.settings.Theme = themes[newIdx]
+		styles.ApplyTheme(m.settings.Theme)
+		_ = m.cfgManager.UpdateSettings(m.settings)
+		m.statusToast = "🎨 Theme applied: " + m.settings.Theme
+	case 3: // Ping Interval
+		intervals := []int{15, 30, 60, 0}
+		curIdx := 1
+		for i, v := range intervals {
+			if v == m.settings.PingInterval {
+				curIdx = i
+				break
+			}
+		}
+		newIdx := (curIdx + delta + len(intervals)) % len(intervals)
+		m.settings.PingInterval = intervals[newIdx]
+		_ = m.cfgManager.UpdateSettings(m.settings)
+		if m.settings.PingInterval > 0 {
+			m.statusToast = fmt.Sprintf("⏱ Ping interval set to %ds", m.settings.PingInterval)
+		} else {
+			m.statusToast = "⏱ Background ping disabled"
+		}
+	}
+}
+
+func (m *AppModel) handleSettingsAction() (tea.Model, tea.Cmd) {
+	switch m.settingsCursor {
+	case 0: // AutoSyncShellAliases
+		m.settings.AutoSyncShellAliases = !m.settings.AutoSyncShellAliases
+		_ = m.cfgManager.UpdateSettings(m.settings)
+		if m.settings.AutoSyncShellAliases {
+			m.statusToast = "⚡ Auto-sync shell aliases ENABLED"
+		} else {
+			m.statusToast = "Auto-sync shell aliases DISABLED"
+		}
+	case 1: // Theme
+		m.handleSettingsCycle(1)
+	case 2: // AutoPingOnLaunch
+		m.settings.AutoPingOnLaunch = !m.settings.AutoPingOnLaunch
+		_ = m.cfgManager.UpdateSettings(m.settings)
+	case 3: // Ping Interval
+		m.handleSettingsCycle(1)
+	case 4: // Default SSH user
+		users := []string{"root", "ubuntu", "admin", "debian", "user"}
+		curIdx := 0
+		for i, u := range users {
+			if u == m.settings.DefaultSSHUser {
+				curIdx = i
+				break
+			}
+		}
+		m.settings.DefaultSSHUser = users[(curIdx+1)%len(users)]
+		_ = m.cfgManager.UpdateSettings(m.settings)
+		m.statusToast = "Default SSH user: " + m.settings.DefaultSSHUser
+	case 5: // ConfirmOnDelete
+		m.settings.ConfirmOnDelete = !m.settings.ConfirmOnDelete
+		_ = m.cfgManager.UpdateSettings(m.settings)
+	case 6: // CheckUpdatesOnStart
+		m.settings.CheckUpdatesOnStart = !m.settings.CheckUpdatesOnStart
+		_ = m.cfgManager.UpdateSettings(m.settings)
+	case 7: // Scan now
+		scanner := aliasdiscovery.NewScanner()
+		items, _ := scanner.Discover(m.servers, m.aliases, m.snippets)
+		if len(items) > 0 {
+			m.discoveredItems = items
+			m.discoveryCursor = 0
+			m.currentModal = modalDiscovery
+			return m, nil
+		}
+		m.statusToast = "✓ Shell profiles are up to date. No new aliases found."
+	}
+	return m, nil
+}
+
+func (m *AppModel) renderDiscoveryModal() string {
+	var b strings.Builder
+	b.WriteString(styles.HeaderStyle.Render("⚡ DISCOVERED SHELL ALIASES & SERVERS") + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(styles.TextNormal).Render(fmt.Sprintf("Found %d new aliases in your shell configurations. Select which items to import into Deck:", len(m.discoveredItems))) + "\n\n")
+
+	maxVisible := 8
+	start := 0
+	if m.discoveryCursor >= maxVisible {
+		start = m.discoveryCursor - maxVisible + 1
+	}
+	end := start + maxVisible
+	if end > len(m.discoveredItems) {
+		end = len(m.discoveredItems)
+	}
+
+	for i := start; i < end; i++ {
+		item := m.discoveredItems[i]
+		isCur := (i == m.discoveryCursor)
+		prefix := "  "
+		if isCur {
+			prefix = styles.CursorIndicator.Render("❯ ")
+		}
+
+		chk := "[ ]"
+		if item.Selected {
+			chk = styles.StatusOnline.Render("[✓]")
+		}
+
+		typeBadge := styles.BadgeTag.Render(fmt.Sprintf("%-15s", item.Type))
+		nameStr := styles.HeaderStyle.Width(14).Render(item.Name)
+		targetStr := lipgloss.NewStyle().Foreground(styles.TextNormal).Width(28).Render(item.Target)
+		srcStr := styles.FooterDesc.Render("(" + item.SourceFile + ")")
+
+		line := fmt.Sprintf("%s%s %s %s %s %s", prefix, chk, typeBadge, nameStr, targetStr, srcStr)
+		if isCur {
+			line = lipgloss.NewStyle().Background(styles.BgSelected).Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+
+	b.WriteString("\n" + styles.FooterDesc.Render("[↑/↓] Navigate  •  [Space] Toggle  •  [a] Toggle All  •  [Enter] Import  •  [Esc] Skip"))
+	return styles.ModalBox.Render(b.String())
 }
 
 func (m *AppModel) renderModal() string {
 	switch m.currentModal {
+	case modalDiscovery:
+		return m.renderDiscoveryModal()
+
 	case modalForm:
 		var b strings.Builder
 		b.WriteString(styles.HeaderStyle.Render(m.form.title) + "\n\n")
@@ -1718,7 +2145,7 @@ func (m *AppModel) renderModal() string {
 	case modalHelp:
 		return styles.ModalBox.Render(
 			"Deck Cockpit Keyboard Shortcuts\n\n" +
-				"  1 .. 5     Switch cockpit tabs (Servers, Aliases, Tunnels, Snippets, Endpoints)\n" +
+				"  1 .. 6     Switch cockpit tabs (Servers, Aliases, Tunnels, Snippets, Endpoints, Settings)\n" +
 				"  Tab        Cycle through tabs\n" +
 				"  Enter      Connect to SSH / Jump to directory / Run snippet / Open URL\n" +
 				"  Space      Toggle SSH tunnel start / stop\n" +
@@ -1781,7 +2208,7 @@ func (m *AppModel) renderCustomTable(t table.Model) string {
 		var cells []string
 		for j, val := range row {
 			w := cols[j].Width
-			cellStyle := lipgloss.NewStyle().Width(w)
+			cellStyle := lipgloss.NewStyle().Width(w).MaxWidth(w).Inline(true)
 			if isSelected {
 				cellStyle = cellStyle.Background(styles.BgSelected).Bold(true)
 			}

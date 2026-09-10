@@ -11,13 +11,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DeckConfig stores user-defined servers, directory aliases, tunnels, snippets, and endpoints.
+// DeckConfig stores user-defined servers, directory aliases, tunnels, snippets, endpoints, and settings.
 type DeckConfig struct {
 	Servers   []*models.Server         `yaml:"servers"`
 	Aliases   []*models.DirectoryAlias `yaml:"aliases"`
 	Tunnels   []*models.Tunnel         `yaml:"tunnels"`
 	Snippets  []*models.Snippet        `yaml:"snippets"`
 	Endpoints []*models.Endpoint       `yaml:"endpoints"`
+	Settings  models.Settings          `yaml:"settings"`
 }
 
 // Manager handles loading, saving, and merging configuration from SSH config and Deck config.
@@ -63,6 +64,7 @@ func (m *Manager) LoadDeckConfig() (*DeckConfig, error) {
 				Tunnels:   []*models.Tunnel{},
 				Snippets:  []*models.Snippet{},
 				Endpoints: []*models.Endpoint{},
+				Settings:  models.DefaultSettings(),
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to read deck config: %w", err)
@@ -71,6 +73,10 @@ func (m *Manager) LoadDeckConfig() (*DeckConfig, error) {
 	var cfg DeckConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse deck.yaml: %w", err)
+	}
+
+	if cfg.Settings.Theme == "" {
+		cfg.Settings = models.DefaultSettings()
 	}
 
 	for _, s := range cfg.Servers {
@@ -322,6 +328,22 @@ func (m *Manager) RemoveEndpoint(name string) error {
 	}
 	cfg.Endpoints = remaining
 
+	return m.SaveDeckConfig(cfg)
+}
+
+// UpdateSettings updates user settings and saves to ~/.config/deck/deck.yaml.
+func (m *Manager) UpdateSettings(settings models.Settings) error {
+	cfg, err := m.LoadDeckConfig()
+	if err != nil {
+		cfg = &DeckConfig{
+			Servers:   []*models.Server{},
+			Aliases:   []*models.DirectoryAlias{},
+			Tunnels:   []*models.Tunnel{},
+			Snippets:  []*models.Snippet{},
+			Endpoints: []*models.Endpoint{},
+		}
+	}
+	cfg.Settings = settings
 	return m.SaveDeckConfig(cfg)
 }
 
