@@ -47,28 +47,33 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          mkdir -p dist /tmp/build
+          mkdir -p dist
           LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildDate=$(date -u +%Y-%m-%d)"
           
           # Linux amd64
-          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
-          tar -czf dist/deck_${VERSION}_linux_amd64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o ./deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_linux_amd64.tar.gz deck README.md LICENSE ARCHITECTURE.md
+          rm -f ./deck
 
           # Linux arm64
-          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
-          tar -czf dist/deck_${VERSION}_linux_arm64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o ./deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_linux_arm64.tar.gz deck README.md LICENSE ARCHITECTURE.md
+          rm -f ./deck
 
           # Darwin amd64
-          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
-          tar -czf dist/deck_${VERSION}_darwin_amd64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o ./deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_darwin_amd64.tar.gz deck README.md LICENSE ARCHITECTURE.md
+          rm -f ./deck
 
           # Darwin arm64
-          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
-          tar -czf dist/deck_${VERSION}_darwin_arm64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o ./deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_darwin_arm64.tar.gz deck README.md LICENSE ARCHITECTURE.md
+          rm -f ./deck
 
           # Windows amd64
-          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck.exe ./cmd/deck
-          (cd /tmp/build && zip -q $GITHUB_WORKSPACE/dist/deck_${VERSION}_windows_amd64.zip deck.exe)
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o ./deck.exe ./cmd/deck
+          zip -q dist/deck_${VERSION}_windows_amd64.zip deck.exe README.md LICENSE ARCHITECTURE.md
+          rm -f ./deck.exe
 
           # Checksums
           cd dist
