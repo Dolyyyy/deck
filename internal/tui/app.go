@@ -627,6 +627,9 @@ func (m *AppModel) probeAllEndpointsCmd() tea.Cmd {
 }
 
 func (m *AppModel) checkUpdateCmd() tea.Cmd {
+	if !m.settings.CheckUpdatesOnStart {
+		return nil
+	}
 	return func() tea.Msg {
 		rel, hasNew, err := m.updaterSvc.CheckUpdate("0.2.0", false)
 		return updateCheckMsg{release: rel, hasNew: hasNew, err: err}
