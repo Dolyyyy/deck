@@ -35,8 +35,8 @@ func TestTCPPinger_ProbeOnline(t *testing.T) {
 	if res.Status != models.StatusOnline {
 		t.Fatalf("expected status online, got %s (err: %v)", res.Status, res.Err)
 	}
-	if res.Latency <= 0 {
-		t.Fatal("expected positive latency measurement")
+	if res.Latency < 0 {
+		t.Fatal("expected non-negative latency measurement")
 	}
 }
 

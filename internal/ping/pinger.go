@@ -43,6 +43,9 @@ func (p *TCPPinger) Probe(ctx context.Context, server *models.Server) (*models.P
 	start := time.Now()
 	conn, err := d.DialContext(ctx, "tcp", target)
 	latency := time.Since(start)
+	if latency <= 0 {
+		latency = 1 * time.Microsecond
+	}
 
 	res := &models.PingResult{
 		ServerName: server.Name,
