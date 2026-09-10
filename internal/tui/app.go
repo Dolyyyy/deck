@@ -2033,9 +2033,19 @@ func (m *AppModel) handleSettingsAction() (tea.Model, tea.Cmd) {
 }
 
 func (m *AppModel) renderDiscoveryModal() string {
+	modalW := m.width - 8
+	if modalW > 94 {
+		modalW = 94
+	}
+	if modalW < 60 {
+		modalW = 60
+	}
+
 	var b strings.Builder
 	b.WriteString(styles.HeaderStyle.Render("⚡ DISCOVERED SHELL ALIASES & SERVERS") + "\n\n")
-	b.WriteString(lipgloss.NewStyle().Foreground(styles.TextNormal).Render(fmt.Sprintf("Found %d new aliases in your shell configurations. Select which items to import into Deck:", len(m.discoveredItems))) + "\n\n")
+	b.WriteString(lipgloss.NewStyle().Foreground(styles.TextNormal).Render(
+		fmt.Sprintf("Found %d new aliases in your shell configs (.bashrc, .zshrc). Select items to import:", len(m.discoveredItems)),
+	) + "\n\n")
 
 	maxVisible := 8
 	start := 0
@@ -2045,6 +2055,14 @@ func (m *AppModel) renderDiscoveryModal() string {
 	end := start + maxVisible
 	if end > len(m.discoveredItems) {
 		end = len(m.discoveredItems)
+	}
+
+	nameW := 12
+	srcW := 14
+	// Prefix(2) + Checkbox(4) + Type(7) + Name(12) + Target(W) + Source(14) + padding(6) = 45
+	targetW := modalW - (2 + 4 + 7 + nameW + srcW + 6)
+	if targetW < 22 {
+		targetW = 22
 	}
 
 	for i := start; i < end; i++ {
@@ -2060,12 +2078,27 @@ func (m *AppModel) renderDiscoveryModal() string {
 			chk = styles.StatusOnline.Render("[✓]")
 		}
 
-		typeBadge := styles.BadgeTag.Render(fmt.Sprintf("%-15s", item.Type))
-		nameStr := styles.HeaderStyle.Width(14).Render(item.Name)
-		targetStr := lipgloss.NewStyle().Foreground(styles.TextNormal).Width(28).Render(item.Target)
-		srcStr := styles.FooterDesc.Render("(" + item.SourceFile + ")")
+		var typeBadge string
+		switch item.Type {
+		case aliasdiscovery.TypeServer:
+			typeBadge = styles.BadgeTag.Render(" [SSH] ")
+		case aliasdiscovery.TypeAlias:
+			typeBadge = styles.BadgeEnv.Render(" [DIR] ")
+		default:
+			typeBadge = styles.LatencyMedium.Render(" [CMD] ")
+		}
 
-		line := fmt.Sprintf("%s%s %s %s %s %s", prefix, chk, typeBadge, nameStr, targetStr, srcStr)
+		nameStr := styles.HeaderStyle.Width(nameW).MaxWidth(nameW).Inline(true).Render(item.Name)
+
+		targetVal := item.Target
+		if len(targetVal) > targetW {
+			targetVal = targetVal[:targetW-3] + "..."
+		}
+		targetStr := lipgloss.NewStyle().Foreground(styles.TextNormal).Width(targetW).MaxWidth(targetW).Inline(true).Render(targetVal)
+
+		srcStr := styles.FooterDesc.Width(srcW).MaxWidth(srcW).Inline(true).Render("(" + item.SourceFile + ")")
+
+		line := fmt.Sprintf("%s%s%s %s %s %s", prefix, chk, typeBadge, nameStr, targetStr, srcStr)
 		if isCur {
 			line = lipgloss.NewStyle().Background(styles.BgSelected).Render(line)
 		}
@@ -2073,7 +2106,7 @@ func (m *AppModel) renderDiscoveryModal() string {
 	}
 
 	b.WriteString("\n" + styles.FooterDesc.Render("[↑/↓] Navigate  •  [Space] Toggle  •  [a] Toggle All  •  [Enter] Import  •  [Esc] Skip"))
-	return styles.ModalBox.Render(b.String())
+	return styles.ModalBox.Width(modalW).Render(b.String())
 }
 
 func (m *AppModel) renderModal() string {
