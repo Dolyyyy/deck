@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
@@ -9,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  goreleaser:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,11 +25,65 @@ jobs:
           go-version: 'stable'
           cache: true
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - name: Determine Version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.2.0")
+            V_NUM="${LATEST_TAG#v}"
+            MAJOR=$(echo "$V_NUM" | cut -d. -f1)
+            MINOR=$(echo "$V_NUM" | cut -d. -f2)
+            PATCH=$(echo "$V_NUM" | cut -d. -f3)
+            NEW_PATCH=$((PATCH + 1))
+            TAG="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "Building Deck release: ${TAG}"
+
+      - name: Compile Multi-Arch Binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist /tmp/build
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.BuildDate=$(date -u +%Y-%m-%d)"
+          
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_linux_amd64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_linux_arm64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+
+          # Darwin amd64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_darwin_amd64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+
+          # Darwin arm64
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck ./cmd/deck
+          tar -czf dist/deck_${VERSION}_darwin_arm64.tar.gz -C /tmp/build deck -C . README.md LICENSE ARCHITECTURE.md
+
+          # Windows amd64
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o /tmp/build/deck.exe ./cmd/deck
+          (cd /tmp/build && zip -q $GITHUB_WORKSPACE/dist/deck_${VERSION}_windows_amd64.zip deck.exe)
+
+          # Checksums
+          cd dist
+          sha256sum deck_${VERSION}_* > checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Deck ${{ steps.version.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

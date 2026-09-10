@@ -55,7 +55,14 @@ echo -e " ${GREEN}✔${RESET} Detected platform: ${BOLD}${OS}/${ARCH}${RESET}"
 echo -e " ${CYAN}◌${RESET} Resolving release version..."
 RELEASE_TAG=""
 if command -v curl >/dev/null 2>&1; then
-    RELEASE_TAG=$(curl -sSL -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/' || true)
+    # Immune to GitHub API rate limits via HTTP 302 location header
+    REDIRECT_URL=$(curl -sIL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)
+    if [[ "$REDIRECT_URL" =~ /releases/tag/([^/]+) ]]; then
+        RELEASE_TAG="${BASH_REMATCH[1]}"
+    fi
+    if [ -z "$RELEASE_TAG" ]; then
+        RELEASE_TAG=$(curl -sSL -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | head -n 1 | sed -E 's/.*"tag_name":\s*"([^"]+)".*/\1/' || true)
+    fi
 fi
 
 if [ -z "$RELEASE_TAG" ]; then
