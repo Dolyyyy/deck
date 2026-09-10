@@ -59,7 +59,8 @@ alias d="pnpm dev"
 		}
 		if it.Name == "myproj" {
 			foundMyproj = true
-			if it.Type != TypeAlias || it.Alias.Path != "/home/user/projects/myproj" {
+			expectedPath := filepath.Clean("/home/user/projects/myproj")
+			if it.Type != TypeAlias || it.Alias.Path != expectedPath {
 				t.Errorf("myproj alias incorrectly parsed: %+v", it.Alias)
 			}
 		}

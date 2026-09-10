@@ -187,26 +187,49 @@ func handleUpdate(cfgMgr *config.Manager) {
 }
 
 func handleQuickJumpOrConnect(cfgMgr *config.Manager, executor *ssh.Executor, query string) {
-	// 1. Check Directory Aliases
+	// 1. Check Directory Aliases (exact match)
 	if alias, err := cfgMgr.FindAlias(query); err == nil {
 		jumpToDirectory(alias.ExpandedPath())
 		return
 	}
 
-	// 2. Check SSH Servers
+	// 2. Load Servers
 	servers, err := cfgMgr.LoadAllServers()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load servers: %v\n", err)
 		os.Exit(1)
 	}
 
-	var matches []*models.Server
+	// 3. Exact Server Name match
 	for _, s := range servers {
 		if strings.EqualFold(s.Name, query) {
-			matches = []*models.Server{s}
-			break
+			fmt.Printf("⚡ Quick connect to %s (%s)...\n", s.Name, s.DisplayAddress())
+			if err := executor.Connect(s); err != nil {
+				fmt.Fprintf(os.Stderr, "SSH connection error: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
-		if s.MatchesQuery(query) {
+	}
+
+	// 4. Check if query is a typo of a known built-in command (e.g. "hell" -> "help")
+	knownCommands := []string{"help", "version", "update", "ls", "list", "path", "init", "completion", "alias", "tunnel", "run", "endpoint", "ping", "export", "import", "lock"}
+	closestCmd, cmdDist := findClosestMatch(query, knownCommands)
+	if cmdDist <= 1 {
+		fmt.Fprintf(os.Stderr, "deck: unknown command: %q\n\n", query)
+		fmt.Fprintf(os.Stderr, "💡 Did you mean:  %s  ?\n", styles.KeyStyle.Render("deck "+closestCmd))
+		fmt.Fprintf(os.Stderr, "   Run 'deck %s' to execute.\n\n", closestCmd)
+		fmt.Fprintln(os.Stderr, "Run 'deck help' to view all available commands.")
+		os.Exit(1)
+	}
+
+	// 5. Match Server by Name prefix or Hostname prefix (NEVER match tags or environments in CLI!)
+	qLower := strings.ToLower(query)
+	var matches []*models.Server
+	for _, s := range servers {
+		sName := strings.ToLower(s.Name)
+		sHost := strings.ToLower(s.Hostname)
+		if strings.HasPrefix(sName, qLower) || strings.HasPrefix(sHost, qLower) {
 			matches = append(matches, s)
 		}
 	}
@@ -226,10 +249,9 @@ func handleQuickJumpOrConnect(cfgMgr *config.Manager, executor *ssh.Executor, qu
 		return
 	}
 
-	// 3. Not found -> Provide intelligent fuzzy correction suggestion
+	// 6. Not found -> Provide intelligent fuzzy correction suggestion
 	deckCfg, _ := cfgMgr.LoadDeckConfig()
 	var candidates []string
-	knownCommands := []string{"ls", "ping", "alias", "tunnel", "run", "endpoint", "export", "import", "update", "lock", "init", "version", "help"}
 	candidates = append(candidates, knownCommands...)
 	for _, s := range servers {
 		candidates = append(candidates, s.Name)
@@ -738,7 +760,7 @@ Usage:
 
 Cockpit Tabs in TUI:
   [1] SSH Servers               [2] Directory Aliases     [3] SSH Tunnels
-  [4] Command Snippets          [5] Web Endpoints & SSL
+  [4] Command Snippets          [5] Web Endpoints & SSL   [6] Settings
 
 Keybindings in TUI:
   [1..5] Direct tab switch      [Tab] Cycle tabs          [Enter] Connect / Jump / Run
