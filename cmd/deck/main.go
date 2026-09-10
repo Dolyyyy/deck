@@ -28,8 +28,8 @@ import (
 )
 
 var (
-	Version   = "0.2.0"
-	BuildDate = "2026-09-10"
+	Version   = "0.2.1"
+	BuildDate = "2026-09-11"
 )
 
 func main() {
@@ -119,7 +119,7 @@ func main() {
 }
 
 func runTUI(cfgMgr *config.Manager, executor *ssh.Executor, prefilter string) {
-	app, err := tui.NewApp(cfgMgr)
+	app, err := tui.NewApp(cfgMgr, Version)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize deck: %v\n", err)
 		os.Exit(1)

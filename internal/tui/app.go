@@ -154,10 +154,15 @@ type AppModel struct {
 	settingsCursor  int
 	discoveredItems []*aliasdiscovery.DiscoveredItem
 	discoveryCursor int
+	version         string
 }
 
 // NewApp creates a new Bubbletea model for deck.
-func NewApp(cfgManager *config.Manager) (*AppModel, error) {
+func NewApp(cfgManager *config.Manager, version ...string) (*AppModel, error) {
+	appVer := "0.2.1"
+	if len(version) > 0 && version[0] != "" {
+		appVer = version[0]
+	}
 	if cfgManager == nil {
 		cfgManager = config.NewManager("", "")
 	}
@@ -245,6 +250,7 @@ func NewApp(cfgManager *config.Manager) (*AppModel, error) {
 		width:             100,
 		height:            28,
 		keys:              DefaultKeyMap(),
+		version:           appVer,
 	}
 	m.transferSvc = transfer.NewService(m.vault)
 
@@ -631,14 +637,14 @@ func (m *AppModel) checkUpdateCmd() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		rel, hasNew, err := m.updaterSvc.CheckUpdate("0.2.0", false)
+		rel, hasNew, err := m.updaterSvc.CheckUpdate(m.version, false)
 		return updateCheckMsg{release: rel, hasNew: hasNew, err: err}
 	}
 }
 
 func (m *AppModel) selfUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
-		newVer, err := m.updaterSvc.SelfUpdate("0.2.0")
+		newVer, err := m.updaterSvc.SelfUpdate(m.version)
 		return selfUpdateResultMsg{newVersion: newVer, err: err}
 	}
 }
@@ -1686,7 +1692,11 @@ func (m *AppModel) View() string {
 
 	// Top Bar & Logo
 	logo := styles.LogoStyle.Render(" DECK ")
-	version := styles.VersionStyle.Render("v0.2.0")
+	dispVer := m.version
+	if !strings.HasPrefix(dispVer, "v") {
+		dispVer = "v" + dispVer
+	}
+	version := styles.VersionStyle.Render(dispVer)
 	leftHeader := lipgloss.JoinHorizontal(lipgloss.Center, logo, version)
 
 	if m.updateAvailable && m.latestRelease != nil {
